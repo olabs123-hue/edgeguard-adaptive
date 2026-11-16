@@ -39,8 +39,8 @@ export function validateEvent(data: unknown): ReliabilityEvent | null {
     || typeof e.type !== 'string' || !TYPES.has(e.type)
     || typeof e.origin !== 'string' || !ORIGINS.has(e.origin)
     || typeof e.requestId !== 'string' || !UUID.test(e.requestId)) return null;
-  if (e.status !== undefined && (!Number.isInteger(e.status) ||
-      (e.status as number) < 100 || (e.status as number) > 599)) return null;
+  if (e.status !== undefined && (typeof e.status !== 'number' || !Number.isInteger(e.status) ||
+      e.status < 100 || e.status > 599)) return null;
   return e as unknown as ReliabilityEvent;
 }
 
