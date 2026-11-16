@@ -63,6 +63,41 @@ jobs:
           set -euo pipefail
           printf '%s' "$DEMO_TOKEN" | npx wrangler secret put API_TOKEN --config wrangler.connected.example.toml
           echo "Separate application bearer secret configured. Value was not logged." >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify newly deployed live attempt-tracing headers
+        shell: bash
+        env:
+          DEMO_TOKEN: ${{ secrets.EDGEGUARD_DEMO_BEARER_TOKEN }}
+          WORKER_URL: https://edgeguard-adaptive.olabosoyeolamide123.workers.dev
+        run: |
+          set -euo pipefail
+          # A secret update may cause a short propagation delay.
+          success=false
+          for attempt in 1 2 3 4 5; do
+            headers="$(mktemp)"
+            code="$(curl -sS --max-time 20 -o /dev/null -D "$headers" -w '%{http_code}' \
+              -H "Authorization: Bearer $DEMO_TOKEN" "$WORKER_URL/demo/fail")"
+            trace="$(awk 'tolower($1)=="x-edgeguard-attempt-trace:" {gsub(/\r/,"",$2);print $2}' "$headers" | tail -1)"
+            origin="$(awk 'tolower($1)=="x-edgeguard-origin:" {gsub(/\r/,"",$2);print $2}' "$headers" | tail -1)"
+            rm -f "$headers"
+            if [ "$code" = 200 ] && [ "$origin" = origin-b ] && [ -n "$trace" ]; then
+              echo "Live request returned HTTP $code from $origin with trace: $trace"
+              echo "Live authenticated routing: HTTP 200 from origin-b." >> "$GITHUB_STEP_SUMMARY"
+              echo "Observed origin attempt sequence: $trace" >> "$GITHUB_STEP_SUMMARY"
+              if [[ "$trace" =~ ^origin-a:503:[0-9]+ms,origin-b:200:[0-9]+ms$ ]]; then
+                echo "Confirmed A-to-B failover in one live request." >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "Origin B served the request; a preceding attempt to A was not observed in this trace." >> "$GITHUB_STEP_SUMMARY"
+              fi
+              success=true
+              break
+            fi
+            echo "Live verification attempt $attempt: HTTP $code, origin ${origin:-none}, trace ${trace:-none}"
+            sleep 2
+          done
+          if [ "$success" != true ]; then
+            echo "::error::Connected Worker deployment did not pass live origin response and attempt trace verification."
+            exit 1
+          fi
       - name: Confirm secure configuration
         run: |
           echo "Private service bindings installed for edgeguard-origin-a and edgeguard-origin-b." >> "$GITHUB_STEP_SUMMARY"
