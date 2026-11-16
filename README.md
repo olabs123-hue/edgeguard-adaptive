@@ -32,3 +32,7 @@ C++ and TypeScript implementations are **separate** and do not share routing sta
 Two deterministic Cloudflare Workers under `origin-fixture/` reproduce a healthy upstream and injected 503/latency scenarios. Both have `workers_dev = false`; no public routes are configured. The edge Worker now supports optional `ORIGIN_A` / `ORIGIN_B` Cloudflare service bindings, but the **normal production configuration remains fail-closed**.
 
 See [private origin integration instructions](docs/PRIVATE_ORIGIN_INTEGRATION.md). A [manual private fixture deployment workflow](.github/workflows/deploy-private-origins.yml) is available after GitHub Actions secrets are configured. The private fixtures are separate from the original C++17 routing engine, which remains a local policy implementation.
+
+## Live measured evidence
+
+A [verified low-rate synthetic live benchmark](benchmarks/LIVE_RESULTS_2026-11-16.md) recorded **80/80 successful responses** at a deliberately paced **4 req/s** (40 healthy-scenario and 40 synthetic-failure-scenario requests). The client-observed p99 latencies were **186.61 ms** and **159.67 ms**, respectively. This is **not** a max-capacity test or proof of per-request A→B recovery. [Raw workflow evidence](https://github.com/olabs123-hue/edgeguard-adaptive/actions/runs/43979254617).
