@@ -49,3 +49,18 @@ Because Worker service bindings are regional/runtime-isolate scoped in this prot
 - `GET /demo/slow` exercises a slower origin A; repeat requests to observe score changes.
 
 Avoid including bearer tokens in committed scripts, screenshots or issue reports. Restore the default `wrangler.toml` via the normal deployment workflow to disable origin forwarding again.
+
+## Deploy the authenticated connected demonstration from GitHub Actions
+
+A separate [Deploy connected failover demo](../.github/workflows/deploy-connected-demo.yml) workflow will activate service bindings **only when you run it manually**. The fixture deployment workflow does not activate these bindings.
+
+1. Generate a random, independent demo bearer secret with at least 32 characters, for example `openssl rand -hex 32`. Do **not** reuse your Cloudflare account API token or put the value in source code, chat messages or screenshots.
+2. Add it under GitHub → Settings → Secrets and variables → Actions → **New repository secret**, with name `EDGEGUARD_DEMO_BEARER_TOKEN`. Keep the existing `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets.
+3. Run [Deploy connected failover demo](../.github/workflows/deploy-connected-demo.yml) manually on `main`. It runs validation, switches the Worker to the opted-in private service-binding profile, and sets the **separate** Worker `API_TOKEN` application secret.
+4. Verify that `GET /demo/ok` without authorization returns **401**. For authenticated testing, use a local shell rather than a screenshot:
+   `curl -i -H "Authorization: Bearer $EDGEGUARD_DEMO_BEARER_TOKEN" https://edgeguard-adaptive.olabosoyeolamide123.workers.dev/demo/fail`
+5. A successful response is expected to come from origin B after A returns an injected 503, but the result must be observed from the deployed account to claim this as validated.
+
+The workflow changes the live Worker **only on an explicit manual run**. The existing public health route remains unauthenticated, while origin routes require the app token. The app token is different from the Cloudflare deployment API token.
+
+To restore fail-closed public-demo configuration, use the original [Deploy Cloudflare Worker](../.github/workflows/deploy-cloudflare.yml) workflow.
