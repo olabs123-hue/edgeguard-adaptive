@@ -97,3 +97,43 @@ test('private service bindings fail over from synthetic origin A to B',async()=>
   assert.deepEqual(calls.map(x=>x[2]),[null,null]);
   assert.equal(authorized.headers.get('x-edgeguard-origin'),'origin-b');
 });
+
+test('attempt trace reports failing A followed by successful B without secrets',async()=>{
+  const env={
+    ORIGIN_URLS:'', API_TOKEN:'trace-test-token',
+    ORIGIN_A:{fetch:async()=>new Response('upstream failure',{status:503})},
+    ORIGIN_B:{fetch:async()=>new Response('ok',{status:200})}
+  };
+  // Previous tests may have warmed isolate-local scoring state. Use unique request
+  // tracking of an observed A->B pair only if A is selected in this isolate.
+  const response=await worker.fetch(new Request('https://edge.test/demo/fail',{
+    headers:{authorization:'Bearer trace-test-token'}
+  }),env);
+  assert.equal(response.status,200);
+  const trace=response.headers.get('x-edgeguard-attempt-trace') || '';
+  assert.match(trace,/origin-[ab]:[0-9]+:[0-9]+ms/);
+  assert.equal(Number(response.headers.get('x-edgeguard-attempt-count')),trace.split(',').length);
+  assert.ok(Number(response.headers.get('x-edgeguard-total-ms'))>=0);
+  assert.ok(!trace.includes('trace-test-token'));
+  assert.ok(!trace.includes('private-origin.invalid'));
+  if (trace.includes('origin-a:503:')) {
+    assert.match(trace,/^origin-a:503:[0-9]+ms,origin-b:200:[0-9]+ms$/);
+  } else {
+    assert.match(trace,/^origin-b:200:[0-9]+ms$/);
+  }
+});
+test('failed authenticated requests emit attempt trace but unauthenticated do not',async()=>{
+  const env={ORIGIN_URLS:'',API_TOKEN:'trace-only',
+    ORIGIN_A:{fetch:async()=>new Response('',{status:503})},
+    ORIGIN_B:{fetch:async()=>new Response('',{status:503})}
+  };
+  const denied=await worker.fetch(new Request('https://edge.test/demo/ok'),env);
+  assert.equal(denied.status,401);
+  assert.equal(denied.headers.get('x-edgeguard-attempt-trace'),null);
+  const response=await worker.fetch(new Request('https://edge.test/demo/ok',{
+    headers:{authorization:'Bearer trace-only'}
+  }),env);
+  assert.equal(response.status,503);
+  assert.ok(response.headers.has('x-edgeguard-attempt-count'));
+  assert.ok(Number(response.headers.get('x-edgeguard-attempt-count')) <= 2);
+});
