@@ -1,9 +1,6 @@
 name: Live Worker smoke test
+# Run only after a connected deploy. Source changes alone do not update the live Worker.
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/live-smoke-test.yml'
   workflow_dispatch:
 
 permissions:
