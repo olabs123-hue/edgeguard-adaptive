@@ -1,0 +1,61 @@
+name: Deploy Cloudflare Worker
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edgeguard-adaptive-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy public demo
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check required Cloudflare secrets
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CF_TOKEN" ] || [ -z "$CF_ACCOUNT" ]; then
+            echo "::error::Configure CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in GitHub Actions secrets before deploying."
+            exit 1
+          fi
+      - name: Install and validate Worker
+        working-directory: worker
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+      - name: Verify fail-closed public configuration
+        working-directory: worker
+        run: |
+          grep -Eq '^ORIGIN_URLS[[:space:]]*=[[:space:]]*""[[:space:]]*$' wrangler.toml || {
+            echo "::error::Public demo must have ORIGIN_URLS disabled"
+            exit 1
+          }
+      - name: Deploy Worker
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy
+      - name: Publish deployment address
+        env:
+          WORKER_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          if [ -n "$WORKER_URL" ]; then
+            echo "Cloudflare Worker deployment: $WORKER_URL" >> "$GITHUB_STEP_SUMMARY"
+            echo "Open $WORKER_URL/healthz to test health endpoint." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Deployment completed, but action did not expose a URL. Inspect the Wrangler deploy logs for the address." >> "$GITHUB_STEP_SUMMARY"
+          fi

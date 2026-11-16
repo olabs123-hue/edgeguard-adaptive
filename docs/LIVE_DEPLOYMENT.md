@@ -41,3 +41,17 @@ npx wrangler deploy
 The queue consumer **only validates and logs** events. It is not a reliable analytics database or an exactly-once execution system.
 
 No public Worker deployment is claimed until the URL is retrieved and verified after authenticating to a Cloudflare account.
+
+## Deploy directly from GitHub Actions (no local terminal)
+
+A manually triggered workflow is available at [Actions → Deploy Cloudflare Worker](https://github.com/olabs123-hue/edgeguard-adaptive/actions/workflows/deploy-cloudflare.yml). It does **not** deploy on pushes.
+
+1. In [Cloudflare](https://dash.cloudflare.com/), locate your **Account ID**.
+2. Create a Cloudflare API token with sufficient Workers deployment permissions. For first-time Worker creation, Cloudflare's current permission model requires the relevant product-level Admin scope. Restrict the token to your account, and keep it private.
+3. In [GitHub repository Actions secrets](https://github.com/olabs123-hue/edgeguard-adaptive/settings/secrets/actions), set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Use GitHub's **New repository secret** UI; never paste the token into chats, source or logs.
+4. Open the [Deploy Cloudflare Worker workflow](https://github.com/olabs123-hue/edgeguard-adaptive/actions/workflows/deploy-cloudflare.yml), click **Run workflow**, select `main`, and run.
+5. Check the run summary for the published `workers.dev` address. Confirm `/healthz` responds `ok`, and that unrelated paths fail closed until trusted origins are configured.
+
+The workflow checks Worker tests and requires `ORIGIN_URLS = ""` before publishing the public demo. It uses `cloudflare/wrangler-action@v4` and requires Cloudflare credentials that the owner must set themselves. Configure the optional GitHub environment `cloudflare-production` with approval rules if you want manual deployment approval.
+
+The GitHub repository's `GITHUB_TOKEN` **cannot** substitute for a Cloudflare API token. A successful GitHub CI run does not establish that a Worker has been deployed.
