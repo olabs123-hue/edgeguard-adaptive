@@ -57,6 +57,19 @@ jobs:
             echo "::error::Expected HTTP 200 response from private fixture origin-b; inspect Worker state, bindings and auth."
             exit 1
           fi
+          trace="$(awk 'BEGIN {IGNORECASE=1} tolower($1)=="x-edgeguard-attempt-trace:" {gsub(/\r/, "", $2); print $2}' "$headers" | tail -1)"
+          count="$(awk 'BEGIN {IGNORECASE=1} tolower($1)=="x-edgeguard-attempt-count:" {gsub(/\r/, "", $2); print $2}' "$headers" | tail -1)"
+          total_ms="$(awk 'BEGIN {IGNORECASE=1} tolower($1)=="x-edgeguard-total-ms:" {gsub(/\r/, "", $2); print $2}' "$headers" | tail -1)"
+          echo "Observed attempt trace: ${trace:-none}; count: ${count:-unknown}; elapsed: ${total_ms:-unknown} ms"
+          if [ -z "$trace" ] || [ -z "$count" ] || [ -z "$total_ms" ]; then
+            echo "::error::Missing attempt-tracing headers. Deploy the latest connected Worker and rerun this smoke test."
+            exit 1
+          fi
+          if [[ "$trace" =~ ^origin-a:503:[0-9]+ms,origin-b:200:[0-9]+ms$ ]]; then
+            echo "Observed origin A (503) then origin B (200) for one request." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Observed trace: $trace. The router may choose origin B directly based on isolate state; failover order is not proven by this run." >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo "LIVE_SMOKE_TEST=PASS" >> "$GITHUB_STEP_SUMMARY"
           echo "Verified health 200, unauthenticated 401, and authenticated synthetic failure scenario returned 200 from origin-b." >> "$GITHUB_STEP_SUMMARY"
           echo "Note: origin-b response alone does not prove origin-a was attempted in this request; isolate-local circuit state may select B directly." >> "$GITHUB_STEP_SUMMARY"
