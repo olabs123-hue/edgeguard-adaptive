@@ -1,0 +1,7 @@
+name = "edgeguard-origin-a"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = false
+
+[vars]
+ORIGIN_ID = "a"

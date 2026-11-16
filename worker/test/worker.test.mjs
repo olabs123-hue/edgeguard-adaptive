@@ -79,3 +79,21 @@ test('queue acknowledges valid events and poison messages',async()=>{
   ]},{ORIGIN_URLS:''});
   assert.deepEqual(ack,['valid','invalid']);
 });
+
+
+test('private service bindings fail over from synthetic origin A to B',async()=>{
+  const calls=[];
+  const env={
+    ORIGIN_URLS:'', API_TOKEN:'private-test-token',
+    ORIGIN_A:{fetch:async req=>{calls.push(['a',req.url,req.headers.get('authorization')]);return new Response('unavailable',{status:503})}},
+    ORIGIN_B:{fetch:async req=>{calls.push(['b',req.url,req.headers.get('authorization')]);return new Response('fallback-ok',{status:200})}}
+  };
+  const unauthorized=await worker.fetch(new Request('https://edge.test/demo/fail'),env);
+  assert.equal(unauthorized.status,401);
+  const authorized=await worker.fetch(new Request('https://edge.test/demo/fail',{headers:{authorization:'Bearer private-test-token',cookie:'x=1'}}),env);
+  assert.equal(authorized.status,200);
+  assert.equal(await authorized.text(),'fallback-ok');
+  assert.deepEqual(calls.map(x=>x[0]),['a','b']);
+  assert.deepEqual(calls.map(x=>x[2]),[null,null]);
+  assert.equal(authorized.headers.get('x-edgeguard-origin'),'origin-b');
+});

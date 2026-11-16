@@ -1,0 +1,19 @@
+# Opt-in deployment profile; NOT used by the current public GitHub Actions deploy.
+# Deploy both private origins FIRST using origin-fixture/wrangler.{a,b}.toml.
+# This config is used only with: npx wrangler deploy --config wrangler.connected.example.toml
+# Configure API_TOKEN through Wrangler secrets for this Worker before exposing routes.
+name = "edgeguard-adaptive"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[vars]
+ORIGIN_URLS = ""
+
+[[services]]
+binding = "ORIGIN_A"
+service = "edgeguard-origin-a"
+
+[[services]]
+binding = "ORIGIN_B"
+service = "edgeguard-origin-b"
