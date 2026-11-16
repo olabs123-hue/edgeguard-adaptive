@@ -1,0 +1,19 @@
+name = "edgeguard-adaptive"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = true
+
+[vars]
+# Keep empty for a public demo. When set, forwarding REQUIRES an API_TOKEN secret.
+ORIGIN_URLS = ""
+
+# To enable Queues, create them in Cloudflare and uncomment:
+# [[queues.producers]]
+# binding = "EVENT_QUEUE"
+# queue = "edgeguard-reliability"
+#
+# [[queues.consumers]]
+# queue = "edgeguard-reliability"
+# max_batch_size = 10
+# max_retries = 3
+# dead_letter_queue = "edgeguard-reliability-dlq"
