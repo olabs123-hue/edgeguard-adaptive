@@ -64,3 +64,19 @@ A separate [Deploy connected failover demo](../.github/workflows/deploy-connecte
 The workflow changes the live Worker **only on an explicit manual run**. The existing public health route remains unauthenticated, while origin routes require the app token. The app token is different from the Cloudflare deployment API token.
 
 To restore fail-closed public-demo configuration, use the original [Deploy Cloudflare Worker](../.github/workflows/deploy-cloudflare.yml) workflow.
+
+## Phase 3: Per-request attempt evidence
+
+Authenticated proxy responses now include `x-edgeguard-attempt-trace`, `x-edgeguard-attempt-count` and `x-edgeguard-total-ms` headers. The trace records the origin alias, observed status/error and elapsed milliseconds for each attempt **within one request**. Backend hostnames and bearer tokens are not emitted.
+
+Example of a conclusively observed failover:
+
+```text
+x-edgeguard-attempt-trace: origin-a:503:12ms,origin-b:200:4ms
+x-edgeguard-attempt-count: 2
+x-edgeguard-total-ms: 17
+```
+
+An actual header containing only `origin-b:200:...` proves successful origin B routing but **not** A-to-B failover on that request. Routing state is isolate-local and scoring may prefer B. Exact millisecond values vary; do not present illustrative numbers as measured results.
+
+The [Live Worker smoke test](../.github/workflows/live-smoke-test.yml) validates the deployed Worker and captures its attempt trace without printing the bearer secret. A connected Worker deployment must run after source changes before these headers exist on the live site. Tracing adds diagnostic headers only on authenticated proxy responses and is not a production tracing system or a distributed telemetry store.
