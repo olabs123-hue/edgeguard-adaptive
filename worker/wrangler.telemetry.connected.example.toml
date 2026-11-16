@@ -1,0 +1,21 @@
+# Explicit opt-in after resources have been created and verified.
+# Deploy ONLY after the private origin Workers and the Queue consumer exist.
+# This configuration keeps existing service bindings and the public Worker name.
+name = "edgeguard-adaptive"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+workers_dev = true
+[vars]
+ORIGIN_URLS = ""
+
+[[services]]
+binding = "ORIGIN_A"
+service = "edgeguard-origin-a"
+
+[[services]]
+binding = "ORIGIN_B"
+service = "edgeguard-origin-b"
+
+[[queues.producers]]
+binding = "EVENT_QUEUE"
+queue = "edgeguard-reliability"
