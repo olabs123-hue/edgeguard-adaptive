@@ -134,7 +134,7 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
       s.probeInFlight = false;
       if (recovering) await publish(env, {
         version: 1, eventId: crypto.randomUUID(), timestamp: new Date().toISOString(),
-        type: 'origin_recovery', origin, requestId
+        type: 'origin_recovery', origin: label, requestId
       });
       const result = new Response(response.body, response);
       result.headers.set('x-edgeguard-request-id', requestId);
@@ -163,7 +163,7 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
         if (s.failures === FAILURE_THRESHOLD)
           await publish(env, {
             version: 1, eventId: crypto.randomUUID(), timestamp: new Date().toISOString(),
-            type: 'origin_failure', origin, requestId, ...(status ? {status} : {})
+            type: 'origin_failure', origin: label, requestId, ...(status ? {status} : {})
           });
       }
     }
