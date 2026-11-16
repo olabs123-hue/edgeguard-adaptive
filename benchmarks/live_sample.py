@@ -13,6 +13,7 @@ import math
 import os
 import time
 import subprocess
+import statistics
 
 DEFAULT_URL = "https://edgeguard-adaptive.olabosoyeolamide123.workers.dev"
 
@@ -97,30 +98,56 @@ def measure(base_url, token, path, count, rps):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default=DEFAULT_URL)
-    parser.add_argument("--count", type=int, default=40)
+    parser.add_argument("--count", type=int, default=20)
+    parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--rps", type=float, default=4.0)
     parser.add_argument("--output", default="benchmark-results.json")
     args = parser.parse_args()
-    if not (1 <= args.count <= 60 and 0 < args.rps <= 5):
-        parser.error("Safety cap: 1-60 requests per scenario and <=5 requests/second")
+    if not (1 <= args.count <= 40 and 1 <= args.trials <= 3 and 0 < args.rps <= 5 and args.count * args.trials <= 120):
+        parser.error("Safety cap: <=40 requests per scenario per trial, <=3 trials, <=120 per scenario overall, <=5 req/s")
     if not args.url.startswith("https://"):
         parser.error("HTTPS URL required")
     token = os.getenv("EDGEGUARD_DEMO_BEARER_TOKEN", "")
     if len(token) < 32:
         raise SystemExit("Missing or too-short benchmark bearer token in GitHub Actions secret")
+    trials = []
+    for trial_no in range(1, args.trials + 1):
+        scenarios = []
+        for route in ("/demo/ok", "/demo/fail"):
+            result = measure(args.url, token, route, args.count, args.rps)
+            scenarios.append(result)
+            print(json.dumps({"trial": trial_no, **result}, sort_keys=True), flush=True)
+        trials.append({"trial": trial_no, "scenarios": scenarios})
+    aggregates = []
+    for route in ("/demo/ok", "/demo/fail"):
+        relevant = [next(x for x in trial["scenarios"] if x["scenario"] == route) for trial in trials]
+        aggregate = {
+            "scenario": route,
+            "trials": len(relevant),
+            "total_requests": sum(x["requests"] for x in relevant),
+            "successful_responses": sum(x["successful_responses"] for x in relevant),
+            "median_trial_p50_ms": round(statistics.median(x["p50_ms"] for x in relevant), 2),
+            "median_trial_p95_ms": round(statistics.median(x["p95_ms"] for x in relevant), 2),
+            "median_trial_p99_ms": round(statistics.median(x["p99_ms"] for x in relevant), 2),
+            "attempt_traces_seen": sum(x["attempt_traces_seen"] for x in relevant),
+            "observed_a503_then_b200": sum(x["observed_a503_then_b200"] for x in relevant)
+        }
+        aggregate["success_percentage"] = round(
+            100 * aggregate["successful_responses"] / aggregate["total_requests"], 2)
+        aggregates.append(aggregate)
+        print("AGGREGATE " + json.dumps(aggregate, sort_keys=True), flush=True)
     results = {
         "run_time_utc": datetime.now(timezone.utc).isoformat(),
         "target": args.url,
-        "test_type": "low-rate synthetic live smoke benchmark, NOT load or capacity testing",
+        "test_type": "three-trial, paced synthetic live samples; not peak throughput, production SLA or stress test",
         "client": "GitHub-hosted Ubuntu Actions runner (shared public cloud network)",
-        "scenarios": [measure(args.url, token, route, args.count, args.rps)
-                      for route in ("/demo/ok", "/demo/fail")]
+        "requested_rps_per_scenario": args.rps,
+        "trials": trials,
+        "aggregate": aggregates
     }
     with open(args.output, "w", encoding="utf-8") as fh:
         json.dump(results, fh, indent=2)
-    for scenario in results["scenarios"]:
-        print(json.dumps(scenario, sort_keys=True))
-    if any(s["successful_responses"] < s["requests"] for s in results["scenarios"]):
+    if any(x["successful_responses"] < x["total_requests"] for x in aggregates):
         raise SystemExit("Some synthetic live requests did not return HTTP 200")
 
 if __name__ == "__main__":
