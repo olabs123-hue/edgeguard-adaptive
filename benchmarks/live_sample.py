@@ -11,10 +11,8 @@ from datetime import datetime, timezone
 import json
 import math
 import os
-import statistics
 import time
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+import subprocess
 
 DEFAULT_URL = "https://edgeguard-adaptive.olabosoyeolamide123.workers.dev"
 
@@ -28,22 +26,34 @@ def percentile(samples, p):
     return round(values[lower] + (values[upper] - values[lower]) * (rank - lower), 2)
 
 def once(base_url, token, path):
-    req = Request(base_url + path, headers={"Authorization": "Bearer " + token,
-                                          "Accept": "application/json"})
+    """Use curl for parity with the successful live smoke test.
+
+    Never print request headers or subprocess arguments containing credentials.
+    """
     started = time.perf_counter()
     try:
-        with urlopen(req, timeout=12) as response:
-            status = response.status
-            origin = response.headers.get("x-edgeguard-origin", "")
-            trace = response.headers.get("x-edgeguard-attempt-trace", "")
-            count = response.headers.get("x-edgeguard-attempt-count", "")
-            response.read(8192)
-    except HTTPError as exc:
-        status = exc.code
-        origin = exc.headers.get("x-edgeguard-origin", "")
-        trace = exc.headers.get("x-edgeguard-attempt-trace", "")
-        count = exc.headers.get("x-edgeguard-attempt-count", "")
-    except (URLError, TimeoutError, OSError) as exc:
+        run = subprocess.run([
+            "curl", "--silent", "--show-error", "--max-time", "12",
+            "--output", os.devnull, "--dump-header", "-",
+            "--header", "Authorization: Bearer " + token,
+            "--header", "Accept: application/json",
+            "--write-out", "\\nEDGEGUARD_STATUS=%{http_code}",
+            base_url + path,
+        ], capture_output=True, text=True, timeout=15, check=False)
+        if run.returncode:
+            status, origin, trace, count = 0, "", "", ""
+        else:
+            head, status_field = run.stdout.rsplit("EDGEGUARD_STATUS=", 1)
+            status = int(status_field.strip())
+            headers = {}
+            for line in head.splitlines():
+                if ":" in line:
+                    name, value = line.split(":", 1)
+                    headers[name.strip().lower()] = value.strip()
+            origin = headers.get("x-edgeguard-origin", "")
+            trace = headers.get("x-edgeguard-attempt-trace", "")
+            count = headers.get("x-edgeguard-attempt-count", "")
+    except (OSError, ValueError, subprocess.TimeoutExpired):
         status, origin, trace, count = 0, "", "", ""
     elapsed_ms = (time.perf_counter() - started) * 1000
     safe_pair = trace.startswith("origin-a:503:") and ",origin-b:200:" in trace
