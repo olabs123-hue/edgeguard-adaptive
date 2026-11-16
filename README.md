@@ -14,7 +14,7 @@ cmake --build build -j 2
 ctest --test-dir build --output-on-failure
 
 cd worker
-npm ci
+npm install
 npm run typecheck
 npm test
 npx wrangler login
