@@ -1,0 +1,38 @@
+name: Live synthetic performance sample
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-performance-sample.yml'
+      - 'benchmarks/live_sample.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sample:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run bounded live synthetic sample
+        env:
+          EDGEGUARD_DEMO_BEARER_TOKEN: ${{ secrets.EDGEGUARD_DEMO_BEARER_TOKEN }}
+        run: |
+          python3 benchmarks/live_sample.py --count 40 --rps 4 --output benchmark-results.json
+      - name: Upload raw measurements
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: edgeguard-live-performance-sample
+          path: benchmark-results.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Publish run summary
+        if: success()
+        run: |
+          echo "Low-rate synthetic live performance sample completed." >> "$GITHUB_STEP_SUMMARY"
+          echo "See benchmark-results.json artifact for raw summary data, p50/p95/p99, statuses, and per-scenario routing evidence." >> "$GITHUB_STEP_SUMMARY"
+          echo "Not a stress test, capacity result, production SLA, or maximum req/sec." >> "$GITHUB_STEP_SUMMARY"
