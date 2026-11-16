@@ -28,6 +28,20 @@ jobs:
             echo "::error::Configure CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID in GitHub Actions secrets before deploying."
             exit 1
           fi
+      - name: Verify Cloudflare token before deployment
+        shell: bash
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --show-error --output "$RUNNER_TEMP/cf-token-status.json" --write-out '%{http_code}' \
+            --header "Authorization: Bearer $CF_TOKEN" \
+            https://api.cloudflare.com/client/v4/user/tokens/verify)"
+          if [ "$code" != "200" ] || ! jq -e '.success == true and .result.status == "active"' "$RUNNER_TEMP/cf-token-status.json" >/dev/null; then
+            echo "::error::Cloudflare rejected the API token (HTTP $code). Replace CLOUDFLARE_API_TOKEN with a valid token from your Cloudflare account. For initial Worker creation, grant Workers product-level Admin for the correct account. Do not put the token in source control or chat."
+            exit 1
+          fi
+          echo "Cloudflare API token verification passed."
       - name: Install and validate Worker
         working-directory: worker
         run: |
