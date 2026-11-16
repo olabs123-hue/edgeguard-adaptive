@@ -1,0 +1,112 @@
+name: Enable durable reliability telemetry
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edgeguard-adaptive-production
+  cancel-in-progress: false
+
+jobs:
+  telemetry:
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DEMO_TOKEN: ${{ secrets.EDGEGUARD_DEMO_BEARER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check credentials and current configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ "${#DEMO_TOKEN}" -ge 32 ] || {
+            echo "::error::Set Cloudflare API token, account ID and separate >=32-character EdgeGuard demo bearer secret."
+            exit 1
+          }
+          grep -Eq '^workers_dev[[:space:]]*=[[:space:]]*false' telemetry-consumer/wrangler.template.toml
+          grep -Fq 'service = "edgeguard-origin-a"' worker/wrangler.telemetry.connected.example.toml
+          grep -Fq 'service = "edgeguard-origin-b"' worker/wrangler.telemetry.connected.example.toml
+      - name: Test telemetry consumer
+        working-directory: telemetry-consumer
+        shell: bash
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+      - name: Test updated edge Worker
+        working-directory: worker
+        shell: bash
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+      - name: Create Queues if missing
+        working-directory: telemetry-consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in edgeguard-reliability edgeguard-reliability-dlq; do
+            if npx wrangler queues info "$name" >/dev/null 2>&1; then
+              echo "Existing Queue: $name"
+            else
+              npx wrangler queues create "$name"
+            fi
+          done
+      - name: Create D1 if missing and generate local-only binding config
+        working-directory: telemetry-consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 list --json > "$RUNNER_TEMP/edgeguard-d1.json"
+          uuid="$(jq -r '[.[] | select(.name=="edgeguard-reliability") | .uuid][0] // empty' "$RUNNER_TEMP/edgeguard-d1.json")"
+          if [ -z "$uuid" ]; then
+            npx wrangler d1 create edgeguard-reliability
+            npx wrangler d1 list --json > "$RUNNER_TEMP/edgeguard-d1.json"
+            uuid="$(jq -r '[.[] | select(.name=="edgeguard-reliability") | .uuid][0] // empty' "$RUNNER_TEMP/edgeguard-d1.json")"
+          fi
+          if ! [[ "$uuid" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+            echo "::error::Could not resolve valid D1 database UUID."
+            exit 1
+          fi
+          sed "s/REPLACE_WITH_REAL_D1_DATABASE_ID/$uuid/" wrangler.template.toml > wrangler.runtime.toml
+          echo "Runtime D1 binding generated for edgeguard-reliability (UUID not committed)."
+      - name: Apply idempotent D1 schema
+        working-directory: telemetry-consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute edgeguard-reliability --remote --yes --file schema.sql --config wrangler.runtime.toml
+      - name: Deploy private Queue consumer
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: telemetry-consumer
+          command: deploy --config wrangler.runtime.toml
+      - name: Deploy EdgeGuard with Queue producer and existing private origins
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy --config wrangler.telemetry.connected.example.toml
+      - name: Preserve separate application bearer secret
+        working-directory: worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$DEMO_TOKEN" | npx wrangler secret put API_TOKEN --config wrangler.telemetry.connected.example.toml
+      - name: Write deployment summary
+        shell: bash
+        run: |
+          echo "Provisioned Queues and D1, deployed private consumer and updated authenticated edge Worker." >> "$GITHUB_STEP_SUMMARY"
+          echo "The consumer has no public workers.dev route. Queue delivery is at-least-once; writes use event-id deduplication." >> "$GITHUB_STEP_SUMMARY"
+          echo "Durable ingestion is NOT yet verified until D1 contains events after a controlled failure." >> "$GITHUB_STEP_SUMMARY"
