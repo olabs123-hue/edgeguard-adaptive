@@ -1,0 +1,91 @@
+name: Verify live durable telemetry
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: cloudflare-production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DEMO_TOKEN: ${{ secrets.EDGEGUARD_DEMO_BEARER_TOKEN }}
+      WORKER_URL: https://edgeguard-adaptive.olabosoyeolamide123.workers.dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate configuration and discover remote database
+        working-directory: telemetry-consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -n "$CLOUDFLARE_API_TOKEN" ] && [ -n "$CLOUDFLARE_ACCOUNT_ID" ] && [ "${#DEMO_TOKEN}" -ge 32 ]
+          npm install --no-audit --no-fund
+          npx wrangler d1 list --json > "$RUNNER_TEMP/db-list.json"
+          uuid="$(jq -r '[.[] | select(.name=="edgeguard-reliability") | .uuid][0] // empty' "$RUNNER_TEMP/db-list.json")"
+          if ! [[ "$uuid" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+            echo "::error::Create the edgeguard-reliability D1 database with Enable durable reliability telemetry first."
+            exit 1
+          fi
+          sed "s/REPLACE_WITH_REAL_D1_DATABASE_ID/$uuid/" wrangler.template.toml > wrangler.runtime.toml
+      - name: Capture current persisted event count
+        working-directory: telemetry-consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute edgeguard-reliability --remote --config wrangler.runtime.toml --json \
+            --command "SELECT COUNT(*) AS n FROM reliability_events" > "$RUNNER_TEMP/d1-before.json"
+          python3 - <<'PY'
+          import json,os
+          data=json.load(open(os.environ['RUNNER_TEMP']+'/d1-before.json'))
+          assert isinstance(data,list) and data
+          before=int(data[0]['results'][0]['n'])
+          open(os.environ['RUNNER_TEMP']+'/d1-before-count','w').write(str(before))
+          print('Stored events before test:', before)
+          PY
+      - name: Generate bounded synthetic origin failures
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            status="$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' \
+              -H "Authorization: Bearer $DEMO_TOKEN" "$WORKER_URL/demo/fail")"
+            if [ "$status" != 200 ]; then
+              echo "::error::Live synthetic request $i returned HTTP $status, expected 200."
+              exit 1
+            fi
+            sleep 0.5
+          done
+          echo "30 authenticated synthetic requests completed with HTTP 200."
+      - name: Confirm new durable rows in D1
+        working-directory: telemetry-consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(cat "$RUNNER_TEMP/d1-before-count")"
+          new=0
+          for attempt in 1 2 3 4 5; do
+            sleep 6
+            npx wrangler d1 execute edgeguard-reliability --remote --config wrangler.runtime.toml --json \
+              --command "SELECT COUNT(*) AS n FROM reliability_events" > "$RUNNER_TEMP/d1-after.json"
+            after="$(python3 - <<'PY'
+          import json,os
+          data=json.load(open(os.environ['RUNNER_TEMP']+'/d1-after.json'))
+          print(int(data[0]['results'][0]['n']))
+          PY
+          )"
+            echo "Observed persisted event count: $before → $after"
+            if [ "$after" -gt "$before" ]; then new=$((after-before));break;fi
+          done
+          if [ "$new" -le 0 ]; then
+            echo "::error::No new D1 events observed; inspect Queue producer bindings, consumer logs, and synthetic origin selection."
+            exit 1
+          fi
+          echo "Verified $new newly stored D1 event rows after synthetic traffic." >> "$GITHUB_STEP_SUMMARY"
+          echo "Verified actual Queue→consumer→D1 ingestion (event-id deduplication tested in CI)." >> "$GITHUB_STEP_SUMMARY"
