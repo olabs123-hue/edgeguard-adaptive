@@ -11,7 +11,7 @@ export interface FailureEvent {
   version: 1;
   eventId: string;
   timestamp: string;
-  type: 'origin_failure' | 'origin_recovery';
+  type: 'origin_attempt_failure' | 'origin_failure' | 'origin_recovery';
   origin: string;
   requestId: string;
   status?: number;
@@ -147,6 +147,14 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
     } catch (_error) {
       trace.push(label + ':' + (status === undefined ? 'network-error' : String(status))
         + ':' + (Date.now() - started) + 'ms');
+      // Emit only sanitized fixture aliases, not third-party hostname, request body, URL or auth.
+      if ((label === 'origin-a' || label === 'origin-b') && status !== undefined) {
+        await publish(env, {
+          version: 1, eventId: crypto.randomUUID(),
+          timestamp: new Date().toISOString(), type: 'origin_attempt_failure',
+          origin: label, requestId, status
+        });
+      }
       s.probeInFlight = false;
       s.halfOpen = false;
       s.failures++;
@@ -195,7 +203,7 @@ export const worker = {
     for (const message of batch.messages) {
       const e = message.body;
       if (!e || e.version !== 1 || typeof e.eventId !== 'string' ||
-          !['origin_failure','origin_recovery'].includes(e.type) ||
+          !['origin_attempt_failure','origin_failure','origin_recovery'].includes(e.type) ||
           typeof e.origin !== 'string' || typeof e.requestId !== 'string') {
         console.error('Invalid reliability event; acknowledged');
         message.ack();
