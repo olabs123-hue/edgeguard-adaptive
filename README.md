@@ -44,3 +44,7 @@ A [verified low-rate synthetic live benchmark](benchmarks/LIVE_RESULTS_2026-11-1
 ### Repeatable live A→B retry evidence
 
 A [three-trial live trace experiment](benchmarks/LIVE_REPEATED_FAILOVER_2026-11-16.md) observed **60/60 HTTP 200 responses**, with **12 verified same-request A503→B200 retries** and **43 ms median Worker-reported request duration across those 12 paired traces**. The remaining requests must not be counted as observed retries. This is synthetic, low-rate evidence and **not** circuit recovery time or production SLA. [Workflow logs](https://github.com/olabs123-hue/edgeguard-adaptive/actions/runs/43981537851).
+
+## Durable reliability telemetry (opt-in)
+
+A separate [Cloudflare Queues → private consumer → D1](docs/DURABLE_TELEMETRY.md) pipeline has been implemented, with schema validation, event-ID deduplication, per-message retries and dead-letter queue configuration. A [manual provisioning and deployment workflow](.github/workflows/enable-durable-telemetry.yml) is prepared. **The pipeline has not yet been enabled or verified in the live Cloudflare account.** Creating Queues and D1 may incur usage charges and requires additional scoped API token permissions. Existing live routing continues unchanged until explicit activation.
