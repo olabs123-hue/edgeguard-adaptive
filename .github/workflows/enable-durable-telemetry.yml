@@ -48,18 +48,6 @@ jobs:
           npm install --no-audit --no-fund
           npm run typecheck
           npm test
-      - name: Create Queues if missing
-        working-directory: telemetry-consumer
-        shell: bash
-        run: |
-          set -euo pipefail
-          for name in edgeguard-reliability edgeguard-reliability-dlq; do
-            if npx wrangler queues info "$name" >/dev/null 2>&1; then
-              echo "Existing Queue: $name"
-            else
-              npx wrangler queues create "$name"
-            fi
-          done
       - name: Create D1 if missing and generate local-only binding config
         working-directory: telemetry-consumer
         shell: bash
@@ -78,6 +66,18 @@ jobs:
           fi
           sed "s/REPLACE_WITH_REAL_D1_DATABASE_ID/$uuid/" wrangler.template.toml > wrangler.runtime.toml
           echo "Runtime D1 binding generated for edgeguard-reliability (UUID not committed)."
+      - name: Create Queues if missing
+        working-directory: telemetry-consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in edgeguard-reliability edgeguard-reliability-dlq; do
+            if npx wrangler queues info "$name" >/dev/null 2>&1; then
+              echo "Existing Queue: $name"
+            else
+              npx wrangler queues create "$name"
+            fi
+          done
       - name: Apply idempotent D1 schema
         working-directory: telemetry-consumer
         shell: bash
