@@ -1,0 +1,62 @@
+name: Live Worker smoke test
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-smoke-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: cloudflare-production
+    env:
+      WORKER_URL: https://edgeguard-adaptive.olabosoyeolamide123.workers.dev
+      DEMO_TOKEN: ${{ secrets.EDGEGUARD_DEMO_BEARER_TOKEN }}
+    steps:
+      - name: Verify secret availability
+        shell: bash
+        run: |
+          if [ -z "$DEMO_TOKEN" ]; then
+            echo "::error::EDGEGUARD_DEMO_BEARER_TOKEN repository secret is missing"
+            exit 1
+          fi
+      - name: Check public health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --show-error --max-time 20 --output /dev/null --write-out '%{http_code}' "$WORKER_URL/healthz")"
+          echo "Health endpoint HTTP $code"
+          test "$code" = 200
+      - name: Verify unauthenticated proxy requests are rejected
+        shell: bash
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --show-error --max-time 20 --output /dev/null --write-out '%{http_code}' "$WORKER_URL/demo/fail")"
+          echo "Unauthenticated proxy HTTP $code"
+          test "$code" = 401
+      - name: Verify authenticated live synthetic-origin fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          trap 'rm -f "$headers" "$body"' EXIT
+          # Application token is passed through the masked GitHub secret; never printed.
+          code="$(curl --silent --show-error --max-time 20 \
+            --header "Authorization: Bearer $DEMO_TOKEN" \
+            --dump-header "$headers" --output "$body" --write-out '%{http_code}' \
+            "$WORKER_URL/demo/fail")"
+          origin="$(awk 'BEGIN {IGNORECASE=1} tolower($1)=="x-edgeguard-origin:" {gsub(/\r/, "", $2); print $2}' "$headers" | tail -1)"
+          echo "Authenticated failover scenario: HTTP $code; selected origin: ${origin:-unknown}"
+          if [ "$code" != 200 ] || [ "$origin" != origin-b ]; then
+            echo "::error::Expected HTTP 200 response from private fixture origin-b; inspect Worker state, bindings and auth."
+            exit 1
+          fi
+          echo "LIVE_SMOKE_TEST=PASS" >> "$GITHUB_STEP_SUMMARY"
+          echo "Verified health 200, unauthenticated 401, and authenticated synthetic failure scenario returned 200 from origin-b." >> "$GITHUB_STEP_SUMMARY"
+          echo "Note: origin-b response alone does not prove origin-a was attempted in this request; isolate-local circuit state may select B directly." >> "$GITHUB_STEP_SUMMARY"
