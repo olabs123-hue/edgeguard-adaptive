@@ -1,0 +1,43 @@
+name: Repeated live failover trace sample
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/repeated-failover-trace.yml'
+      - 'benchmarks/repeated_trace.py'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repeated-trace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Observe bounded authenticated live failover traces
+        env:
+          EDGEGUARD_DEMO_BEARER_TOKEN: ${{ secrets.EDGEGUARD_DEMO_BEARER_TOKEN }}
+        run: python3 benchmarks/repeated_trace.py
+      - name: Archive aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repeated-live-failover-trace
+          path: repeated-trace-results.json
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Add experiment summary
+        if: success()
+        run: |
+          echo "Three-trial live synthetic trace observation completed." >> "$GITHUB_STEP_SUMMARY"
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          r=json.load(open('repeated-trace-results.json'))
+          print(f"HTTP 200: {r['http_200']}/{r['total_requests']}")
+          print(f"Verified same-request A503→B200 traces: {r['verified_a503_to_b200_same_request']}/{r['total_requests']}")
+          print(f"Median Worker-reported total for verified paired traces (ms): {r['median_worker_duration_ms_for_verified_pairs']}")
+          print("Synthetic origins; rate was fixed at 2 requests/sec; not an SLA or maximum throughput.")
+          PY
