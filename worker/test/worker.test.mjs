@@ -137,3 +137,26 @@ test('failed authenticated requests emit attempt trace but unauthenticated do no
   assert.ok(response.headers.has('x-edgeguard-attempt-count'));
   assert.ok(Number(response.headers.get('x-edgeguard-attempt-count')) <= 2);
 });
+
+
+test('private origin failure event uses sanitized alias and structured IDs',async()=>{
+  const events=[];
+  const env={ORIGIN_URLS:'',API_TOKEN:'telemetry-private',
+    EVENT_QUEUE:{send:async event=>events.push(event)},
+    ORIGIN_A:{fetch:async()=>new Response('fail',{status:503})},
+    ORIGIN_B:{fetch:async()=>new Response('fail',{status:503})}};
+  const res=await worker.fetch(new Request('https://edge.test/demo/fail',{
+    headers:{authorization:'Bearer telemetry-private'}
+  }),env);
+  assert.equal(res.status,503);
+  const emitted=events.filter(e=>e.type==='origin_attempt_failure');
+  assert.ok(emitted.length>=1);
+  for(const e of emitted){
+    assert.ok(['origin-a','origin-b'].includes(e.origin));
+    assert.equal(e.status,503);
+    assert.match(e.eventId,/^[0-9a-f-]{36}$/i);
+    assert.match(e.requestId,/^[0-9a-f-]{36}$/i);
+    assert.equal('authorization' in e,false);
+    assert.equal('url' in e,false);
+  }
+});
