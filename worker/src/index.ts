@@ -88,6 +88,10 @@ async function publish(env: Env, event: FailureEvent): Promise<void> {
 
 async function proxy(request: Request, env: Env, requestId: string, urls: string[]): Promise<Response> {
   const excluded = new Set<string>();
+  // Diagnostic trace is scoped to authenticated requests and private fixture aliases.
+  // Never publish real backend hostnames or authentication credentials.
+  const trace: string[] = [];
+  const startedRequest = Date.now();
   const attempts = Math.min(2, urls.length);
   for (let i = 0; i < attempts; ++i) {
     const origin = selectOrigin(urls, excluded, Date.now());
@@ -101,6 +105,8 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
     const target = new URL(incoming.pathname + incoming.search,
       binding ? 'https://private-origin.invalid' : origin);
     const started = Date.now();
+    const label = origin === 'binding:origin-a' ? 'origin-a'
+      : origin === 'binding:origin-b' ? 'origin-b' : 'external-origin';
     let status: number | undefined;
     try {
       // Do not forward caller credentials or arbitrary hop-by-hop headers.
@@ -120,6 +126,7 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
       status = response.status;
       if (status >= 500) throw new Error('upstream_5xx');
       const elapsed = Date.now() - started;
+      trace.push(label + ':' + response.status + ':' + elapsed + 'ms');
       s.latencyMs = s.latencyMs ? 0.7 * s.latencyMs + 0.3 * elapsed : elapsed;
       const recovering = s.halfOpen;
       s.failures = 0;
@@ -133,8 +140,13 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
       result.headers.set('x-edgeguard-request-id', requestId);
       result.headers.set('x-edgeguard-origin', binding ? origin.slice(8) : new URL(origin).hostname);
       result.headers.set('cache-control', 'no-store');
+      result.headers.set('x-edgeguard-attempt-trace', trace.join(','));
+      result.headers.set('x-edgeguard-attempt-count', String(trace.length));
+      result.headers.set('x-edgeguard-total-ms', String(Date.now() - startedRequest));
       return result;
     } catch (_error) {
+      trace.push(label + ':' + (status === undefined ? 'network-error' : String(status))
+        + ':' + (Date.now() - started) + 'ms');
       s.probeInFlight = false;
       s.halfOpen = false;
       s.failures++;
@@ -149,7 +161,10 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
     }
   }
   return new Response(JSON.stringify({error:'no_available_origin',requestId}),
-    {status:503,headers:{...JSON_HEADERS,'x-edgeguard-request-id':requestId}});
+    {status:503,headers:{...JSON_HEADERS,'x-edgeguard-request-id':requestId,
+      'x-edgeguard-attempt-trace':trace.join(','),
+      'x-edgeguard-attempt-count':String(trace.length),
+      'x-edgeguard-total-ms':String(Date.now()-startedRequest)}});
 }
 
 export const worker = {
