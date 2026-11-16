@@ -36,3 +36,7 @@ See [private origin integration instructions](docs/PRIVATE_ORIGIN_INTEGRATION.md
 ## Live measured evidence
 
 A [verified low-rate synthetic live benchmark](benchmarks/LIVE_RESULTS_2026-11-16.md) recorded **80/80 successful responses** at a deliberately paced **4 req/s** (40 healthy-scenario and 40 synthetic-failure-scenario requests). The client-observed p99 latencies were **186.61 ms** and **159.67 ms**, respectively. This is **not** a max-capacity test or proof of per-request A→B recovery. [Raw workflow evidence](https://github.com/olabs123-hue/edgeguard-adaptive/actions/runs/43979254617).
+
+### Three-trial live measurements
+
+[Repeated synthetic benchmark](benchmarks/LIVE_THREE_TRIAL_2026-11-16.md): **240/240 HTTP 200 responses** at a deliberately controlled **4 req/s per scenario** across three sequential trials. Median **trial** p99 latency was **154.35 ms** (healthy route) and **137.69 ms** (synthetic failure route). The figures do **not** represent maximum throughput, production availability or verified per-request A-to-B recovery. [GitHub Actions run](https://github.com/olabs123-hue/edgeguard-adaptive/actions/runs/43980181675).
