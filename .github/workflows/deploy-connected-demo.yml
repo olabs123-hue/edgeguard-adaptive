@@ -1,0 +1,70 @@
+name: Deploy connected failover demo
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edgeguard-adaptive-production
+  cancel-in-progress: false
+
+jobs:
+  deploy-connected:
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check required credentials
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEMO_TOKEN: ${{ secrets.EDGEGUARD_DEMO_BEARER_TOKEN }}
+        shell: bash
+        run: |
+          if [ -z "$CF_TOKEN" ] || [ -z "$CF_ACCOUNT" ] || [ -z "$DEMO_TOKEN" ]; then
+            echo "::error::Set CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID and EDGEGUARD_DEMO_BEARER_TOKEN in repository Actions secrets."
+            exit 1
+          fi
+          if [ "${#DEMO_TOKEN}" -lt 32 ]; then
+            echo "::error::EDGEGUARD_DEMO_BEARER_TOKEN must have at least 32 characters."
+            exit 1
+          fi
+      - name: Install and validate Worker
+        working-directory: worker
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+      - name: Check private service bindings
+        working-directory: worker
+        run: |
+          grep -Fq 'service = "edgeguard-origin-a"' wrangler.connected.example.toml
+          grep -Fq 'service = "edgeguard-origin-b"' wrangler.connected.example.toml
+          grep -Eq '^ORIGIN_URLS[[:space:]]*=[[:space:]]*""[[:space:]]*$' wrangler.connected.example.toml
+      - name: Deploy connected demo with private origins
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
+          command: deploy --config wrangler.connected.example.toml
+      - name: Configure separate application authentication secret
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          DEMO_TOKEN: ${{ secrets.EDGEGUARD_DEMO_BEARER_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$DEMO_TOKEN" | npx wrangler secret put API_TOKEN --config wrangler.connected.example.toml
+          echo "Separate application bearer secret configured. Value was not logged." >> "$GITHUB_STEP_SUMMARY"
+      - name: Confirm secure configuration
+        run: |
+          echo "Private service bindings installed for edgeguard-origin-a and edgeguard-origin-b." >> "$GITHUB_STEP_SUMMARY"
+          echo "Only authenticated GET/HEAD origin requests are forwarded; root and healthz remain public." >> "$GITHUB_STEP_SUMMARY"
+          echo "Test route: GET /demo/fail with Authorization: Bearer <application-secret>." >> "$GITHUB_STEP_SUMMARY"
