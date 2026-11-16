@@ -36,3 +36,28 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npm run typecheck
       - run: npm test
+  telemetry-consumer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: telemetry-consumer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - name: Validate D1 schema with SQLite
+        run: |
+          python3 - <<'PY'
+          import sqlite3
+          db=sqlite3.connect(':memory:')
+          db.executescript(open('schema.sql').read())
+          row=('a1b2c3d4-1234-4123-8123-1234567890ab','2026-11-17T00:00:00Z','origin_attempt_failure','origin-a','b2b2c3d4-1234-4123-8123-1234567890ab',503)
+          sql='INSERT INTO reliability_events(event_id,event_timestamp,event_type,origin,request_id,http_status) VALUES(?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING'
+          db.execute(sql,row);db.execute(sql,row)
+          assert db.execute('SELECT COUNT(*) FROM reliability_events').fetchone()[0]==1
+          print('Schema and idempotent insert verified in SQLite')
+          PY
