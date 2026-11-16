@@ -1,6 +1,9 @@
 /** Experimental Cloudflare Worker. All circuit state is isolate-local. */
+export interface ServiceFetcher { fetch(request: Request): Promise<Response> }
 export interface Env {
   ORIGIN_URLS: string;
+  ORIGIN_A?: ServiceFetcher; // optional Cloudflare service binding
+  ORIGIN_B?: ServiceFetcher; // optional Cloudflare service binding
   EVENT_QUEUE?: Queue<FailureEvent>;
   API_TOKEN?: string; // Cloudflare secret: never set in wrangler.toml
 }
@@ -39,6 +42,10 @@ function originState(origin: string): OriginState {
 }
 
 function configuredOrigins(env: Env): string[] {
+  // Deploy both private origin workers and bind them explicitly to opt in.
+  // The public demo remains disabled by default.
+  if (!env.ORIGIN_URLS?.trim() && env.ORIGIN_A && env.ORIGIN_B)
+    return ['binding:origin-a', 'binding:origin-b'];
   const raw = (env.ORIGIN_URLS || '').split(',').map(v => v.trim()).filter(Boolean);
   if (!raw.length) return [];
   const result: string[] = [];
@@ -89,7 +96,10 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
     const s = originState(origin);
     if (s.halfOpen) s.probeInFlight = true;
     const incoming = new URL(request.url);
-    const target = new URL(incoming.pathname + incoming.search, origin);
+    const binding = origin === 'binding:origin-a' ? env.ORIGIN_A
+      : origin === 'binding:origin-b' ? env.ORIGIN_B : undefined;
+    const target = new URL(incoming.pathname + incoming.search,
+      binding ? 'https://private-origin.invalid' : origin);
     const started = Date.now();
     let status: number | undefined;
     try {
@@ -100,12 +110,13 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
         if (value) headers.set(name, value);
       }
       headers.set('x-edgeguard-request-id', requestId);
-      const response = await fetch(new Request(target, {
+      const forward = new Request(target, {
         method: request.method,
         headers,
         redirect: 'manual',
         signal: AbortSignal.timeout(TIMEOUT_MS),
-      }));
+      });
+      const response = await (binding ? binding.fetch(forward) : fetch(forward));
       status = response.status;
       if (status >= 500) throw new Error('upstream_5xx');
       const elapsed = Date.now() - started;
@@ -120,7 +131,7 @@ async function proxy(request: Request, env: Env, requestId: string, urls: string
       });
       const result = new Response(response.body, response);
       result.headers.set('x-edgeguard-request-id', requestId);
-      result.headers.set('x-edgeguard-origin', new URL(origin).hostname);
+      result.headers.set('x-edgeguard-origin', binding ? origin.slice(8) : new URL(origin).hostname);
       result.headers.set('cache-control', 'no-store');
       return result;
     } catch (_error) {
@@ -151,7 +162,7 @@ export const worker = {
     }), {headers:JSON_HEADERS});
     if (!['GET', 'HEAD'].includes(request.method))
       return new Response('Method not allowed', {status:405,headers:{allow:'GET, HEAD'}});
-    if (!env.ORIGIN_URLS?.trim())
+    if (!env.ORIGIN_URLS?.trim() && !(env.ORIGIN_A && env.ORIGIN_B))
       return new Response(JSON.stringify({error:'origins_not_configured'}),
         {status:503,headers:JSON_HEADERS});
     // Fail closed: a public Worker must not become an unauthenticated fetch proxy.
