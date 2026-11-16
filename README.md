@@ -26,3 +26,9 @@ The deployment publishes the **Worker demo only**, not the C++ routing engine or
 ## Current limitations
 
 C++ and TypeScript implementations are **separate** and do not share routing state. Worker circuit states are isolate-local, Queue processing is telemetry-only without durable deduplication, and caching is not implemented. GET/HEAD are the only proxy methods. There is no claimed public deployment, production SLA, or measured end-to-end benchmark.
+
+## Phase 2: Private synthetic origins (optional, not yet activated)
+
+Two deterministic Cloudflare Workers under `origin-fixture/` reproduce a healthy upstream and injected 503/latency scenarios. Both have `workers_dev = false`; no public routes are configured. The edge Worker now supports optional `ORIGIN_A` / `ORIGIN_B` Cloudflare service bindings, but the **normal production configuration remains fail-closed**.
+
+See [private origin integration instructions](docs/PRIVATE_ORIGIN_INTEGRATION.md). A [manual private fixture deployment workflow](.github/workflows/deploy-private-origins.yml) is available after GitHub Actions secrets are configured. The private fixtures are separate from the original C++17 routing engine, which remains a local policy implementation.

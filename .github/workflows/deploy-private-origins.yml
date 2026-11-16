@@ -1,0 +1,67 @@
+name: Deploy private origin fixtures
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edgeguard-origin-fixtures
+  cancel-in-progress: false
+
+jobs:
+  private-fixtures:
+    runs-on: ubuntu-latest
+    environment: cloudflare-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check secrets
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          [ -n "$CF_TOKEN" ] && [ -n "$CF_ACCOUNT" ] || {
+            echo "::error::Cloudflare deployment secrets are missing."
+            exit 1
+          }
+      - name: Install and test fixtures
+        working-directory: origin-fixture
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+      - name: Enforce private fixture configuration
+        working-directory: origin-fixture
+        run: |
+          for config in wrangler.a.toml wrangler.b.toml; do
+            grep -Eq '^workers_dev[[:space:]]*=[[:space:]]*false[[:space:]]*$' "$config" || {
+              echo "::error::Fixture must not have a public workers.dev route."
+              exit 1
+            }
+            if grep -Eq '^\[\[routes\]\]|^route[[:space:]]*=' "$config"; then
+              echo "::error::Fixture must not declare a public route."
+              exit 1
+            fi
+          done
+      - name: Deploy private origin A
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: origin-fixture
+          command: deploy --config wrangler.a.toml
+      - name: Deploy private origin B
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: origin-fixture
+          command: deploy --config wrangler.b.toml
+      - name: Deployment summary
+        run: |
+          echo "Private test origins deployed: edgeguard-origin-a and edgeguard-origin-b." >> "$GITHUB_STEP_SUMMARY"
+          echo "These Workers have no public workers.dev routes." >> "$GITHUB_STEP_SUMMARY"
+          echo "EdgeGuard Adaptive public demo has NOT been switched to the connected profile." >> "$GITHUB_STEP_SUMMARY"

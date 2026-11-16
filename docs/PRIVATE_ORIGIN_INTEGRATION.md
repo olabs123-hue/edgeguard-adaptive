@@ -14,6 +14,10 @@ The default public EdgeGuard deployment still has `ORIGIN_URLS = ""` and no serv
 
 ## Step-by-step activation (requires account owner authorization)
 
+You may first run the [manual GitHub Actions deploy-private-origins workflow](../.github/workflows/deploy-private-origins.yml). It uses your existing GitHub repository Cloudflare deployment secrets, runs fixture tests, verifies `workers_dev = false` in both configs, and deploys only the two private fixtures. The public EdgeGuard Worker is **not** changed by this workflow.
+
+Or use Wrangler locally as below.
+
 From the repository checkout:
 
 ```bash
